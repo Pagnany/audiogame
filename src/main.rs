@@ -4,6 +4,11 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
+const FFT_SIZE: usize = 2048;
+const FFT_HOP_SIZE: usize = FFT_SIZE / 2;
+const SAMPLE_RATE: f32 = 48_000.0;
+const FREQUENCY_BANDS: usize = 3;
+
 fn main() {
     #[cfg(target_os = "windows")]
     unsafe {
@@ -18,11 +23,23 @@ fn main() {
         .run();
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct AudioLevel {
-    latest: Arc<AtomicU32>,
-    smoothed: f32,
+    latest: Arc<[AtomicU32; FREQUENCY_BANDS]>,
+    smoothed: [f32; FREQUENCY_BANDS],
 }
+
+impl Default for AudioLevel {
+    fn default() -> Self {
+        Self {
+            latest: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
+            smoothed: [0.0; FREQUENCY_BANDS],
+        }
+    }
+}
+
+#[derive(Component)]
+struct FrequencyBand(usize);
 
 fn setup(
     mut commands: Commands,
@@ -31,11 +48,14 @@ fn setup(
 ) {
     commands.spawn(Camera2d);
 
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::default())),
-        MeshMaterial2d(materials.add(Color::from(PURPLE))),
-        Transform::default().with_scale(Vec3::splat(128.)),
-    ));
+    for (index, x) in [-80.0, 0.0, 80.0].into_iter().enumerate() {
+        commands.spawn((
+            Mesh2d(meshes.add(Rectangle::default())),
+            MeshMaterial2d(materials.add(Color::from(PURPLE))),
+            Transform::from_xyz(x, -60.0, 0.0).with_scale(Vec3::new(48.0, 8.0, 1.0)),
+            FrequencyBand(index),
+        ));
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -64,7 +84,10 @@ fn start_audio_capture(_audio_level: Res<AudioLevel>) {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_system_audio(latest: Arc<AtomicU32>) -> Result<(), wasapi::WasapiError> {
+fn capture_system_audio(
+    latest: Arc<[AtomicU32; FREQUENCY_BANDS]>,
+) -> Result<(), wasapi::WasapiError> {
+    use rustfft::{FftPlanner, num_complex::Complex};
     use std::collections::VecDeque;
     use wasapi::{DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
@@ -85,6 +108,17 @@ fn capture_system_audio(latest: Arc<AtomicU32>) -> Result<(), wasapi::WasapiErro
     audio_client.start_stream()?;
 
     let mut bytes = VecDeque::new();
+    let mut samples = VecDeque::with_capacity(FFT_SIZE * 2);
+    let mut planner = FftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(FFT_SIZE);
+    let window: Vec<f32> = (0..FFT_SIZE)
+        .map(|index| {
+            0.5 - 0.5 * (2.0 * std::f32::consts::PI * index as f32 / FFT_SIZE as f32).cos()
+        })
+        .collect();
+    let window_sum: f32 = window.iter().sum();
+    let mut fft_buffer = vec![Complex::new(0.0, 0.0); FFT_SIZE];
+
     loop {
         match event.wait_for_event(1_000) {
             Ok(()) => {}
@@ -93,47 +127,64 @@ fn capture_system_audio(latest: Arc<AtomicU32>) -> Result<(), wasapi::WasapiErro
         }
 
         capture.read_from_device_to_deque(&mut bytes)?;
-        let mut sum_of_squares = 0.0_f64;
-        let mut sample_count = 0_u64;
+        bytes.make_contiguous();
         let (first, second) = bytes.as_slices();
 
-        for sample in first
-            .chunks_exact(4)
-            .chain(second.chunks_exact(4))
-            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte sample")))
-            .filter(|sample| sample.is_finite())
-        {
-            sum_of_squares += f64::from(sample) * f64::from(sample);
-            sample_count += 1;
+        for sample in first.chunks_exact(8).chain(second.chunks_exact(8)) {
+            let left = f32::from_le_bytes(sample[..4].try_into().expect("four-byte sample"));
+            let right = f32::from_le_bytes(sample[4..].try_into().expect("four-byte sample"));
+            let mono = (left + right) * 0.5;
+            samples.push_back(if mono.is_finite() { mono } else { 0.0 });
         }
         bytes.clear();
 
-        let rms = if sample_count == 0 {
-            0.0
-        } else {
-            (sum_of_squares / sample_count as f64).sqrt() as f32
-        };
-        latest.store(rms.to_bits(), Ordering::Relaxed);
+        while samples.len() >= FFT_SIZE {
+            for (index, sample) in samples.iter().take(FFT_SIZE).enumerate() {
+                fft_buffer[index] = Complex::new(sample * window[index], 0.0);
+            }
+            fft.process(&mut fft_buffer);
+
+            let mut band_power = [0.0_f32; FREQUENCY_BANDS];
+            for (bin, value) in fft_buffer.iter().enumerate().take(FFT_SIZE / 2).skip(1) {
+                let frequency = bin as f32 * SAMPLE_RATE / FFT_SIZE as f32;
+                let band = if frequency < 250.0 {
+                    0
+                } else if frequency < 2_000.0 {
+                    1
+                } else {
+                    2
+                };
+                let amplitude = value.norm() * 2.0 / window_sum;
+                band_power[band] += amplitude * amplitude * 0.5;
+            }
+
+            for (band, power) in band_power.into_iter().enumerate() {
+                let level = (power.sqrt() * 5.0).clamp(0.0, 1.0);
+                latest[band].store(level.to_bits(), Ordering::Relaxed);
+            }
+
+            for _ in 0..FFT_HOP_SIZE {
+                samples.pop_front();
+            }
+        }
     }
 }
 
 fn animate_mesh(
     time: Res<Time>,
     mut audio_level: ResMut<AudioLevel>,
-    mut mesh: Query<&mut Transform, With<Mesh2d>>,
+    mut meshes: Query<(&mut Transform, &FrequencyBand), With<Mesh2d>>,
 ) {
-    let rms = f32::from_bits(audio_level.latest.load(Ordering::Relaxed));
-    let target = (rms * 5.0).clamp(0.0, 1.0);
-    let response = if target > audio_level.smoothed {
-        18.0
-    } else {
-        4.0
-    };
-    audio_level.smoothed +=
-        (target - audio_level.smoothed) * (response * time.delta_secs()).clamp(0.0, 1.0);
+    let latest = Arc::clone(&audio_level.latest);
+    for (band, smoothed) in audio_level.smoothed.iter_mut().enumerate() {
+        let target = f32::from_bits(latest[band].load(Ordering::Relaxed));
+        let response = if target > *smoothed { 18.0 } else { 4.0 };
+        *smoothed += (target - *smoothed) * (response * time.delta_secs()).clamp(0.0, 1.0);
+    }
 
-    if let Ok(mut transform) = mesh.single_mut() {
-        transform.scale.x = 128.0 * (1.0 + audio_level.smoothed * 0.4);
-        transform.scale.y = 128.0 * (1.0 + audio_level.smoothed * 0.8);
+    for (mut transform, band) in &mut meshes {
+        let height = 8.0 + audio_level.smoothed[band.0] * 120.0;
+        transform.scale.y = height;
+        transform.translation.y = -60.0 + height / 2.0;
     }
 }
