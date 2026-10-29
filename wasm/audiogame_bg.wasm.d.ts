@@ -1,0 +1,36 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_get_streamconfig_buffer_size: (a: number) => number;
+export const __wbg_get_streamconfig_channels: (a: number) => number;
+export const main: (a: number, b: number) => number;
+export const __wbg_get_streamconfig_sample_rate: (a: number) => number;
+export const __wbg_set_streamconfig_buffer_size: (a: number, b: number) => void;
+export const __wbg_set_streamconfig_channels: (a: number, b: number) => void;
+export const __wbg_set_streamconfig_sample_rate: (a: number, b: number) => void;
+export const __wbg_streamconfig_free: (a: number, b: number) => void;
+export const process_audio_samples: (a: number, b: number, c: number, d: number) => [number, number];
+export const start_audio_analysis: (a: number) => [number, number];
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___js_sys_246de70de5f3a1de___Array__web_sys_8a2d5bbb86ff9619___features__gen_ResizeObserver__ResizeObserver______true_: (a: number, b: number, c: any, d: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_932a34bb4ed1054f___JsError___true_: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___core_37ee0ce0c4cd57d5___option__Option_web_sys_8a2d5bbb86ff9619___features__gen_Blob__Blob_______true_: (a: number, b: number, c: number) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true_: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1_: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__12: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__13: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__14: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__15: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__16: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__17: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke___wasm_bindgen_932a34bb4ed1054f___JsValue______true__1__18: (a: number, b: number, c: any) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke_______true_: (a: number, b: number) => void;
+export const wasm_bindgen_932a34bb4ed1054f___convert__closures_____invoke_______true__1_: (a: number, b: number) => void;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_destroy_closure: (a: number, b: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

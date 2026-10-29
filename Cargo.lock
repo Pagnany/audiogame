@@ -429,6 +429,7 @@ dependencies = [
  "log",
  "rustfft",
  "wasapi",
+ "wasm-bindgen",
 ]
 
 [[package]]

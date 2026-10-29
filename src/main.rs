@@ -1,5 +1,7 @@
 use bevy::{color::palettes::basic::PURPLE, prelude::*};
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
+#[cfg(any(target_os = "windows", target_os = "linux", target_arch = "wasm32"))]
 use std::collections::VecDeque;
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
@@ -8,13 +10,19 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_arch = "wasm32"))]
 const FFT_SIZE: usize = 2048;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_arch = "wasm32"))]
 const FFT_HOP_SIZE: usize = FFT_SIZE / 2;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 const SAMPLE_RATE: f32 = 48_000.0;
 const FREQUENCY_BANDS: usize = 3;
+
+#[cfg(target_arch = "wasm32")]
+std::thread_local! {
+    static WEB_AUDIO_ANALYZER: RefCell<Option<AudioAnalyzer>> = const { RefCell::new(None) };
+    static WEB_AUDIO_LEVELS: RefCell<Option<Arc<[AtomicU32; FREQUENCY_BANDS]>>> = const { RefCell::new(None) };
+}
 
 fn main() {
     #[cfg(target_os = "windows")]
@@ -38,8 +46,12 @@ struct AudioLevel {
 
 impl Default for AudioLevel {
     fn default() -> Self {
+        let latest = Arc::new(std::array::from_fn(|_| AtomicU32::new(0)));
+        #[cfg(target_arch = "wasm32")]
+        WEB_AUDIO_LEVELS.with(|levels| *levels.borrow_mut() = Some(Arc::clone(&latest)));
+
         Self {
-            latest: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
+            latest,
             smoothed: [0.0; FREQUENCY_BANDS],
         }
     }
@@ -102,6 +114,7 @@ fn start_audio_capture(audio_level: Res<AudioLevel>) {
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn start_audio_capture(_audio_level: Res<AudioLevel>) {
+    #[cfg(not(target_arch = "wasm32"))]
     log::warn!("System audio capture is only supported on Windows and Linux.");
 }
 
@@ -130,7 +143,7 @@ fn capture_system_audio(
 
     let mut bytes = VecDeque::new();
     let mut planner = FftPlanner::<f32>::new();
-    let mut analyzer = AudioAnalyzer::new(&mut planner);
+    let mut analyzer = AudioAnalyzer::new(&mut planner, SAMPLE_RATE);
 
     loop {
         match event.wait_for_event(1_000) {
@@ -176,7 +189,7 @@ fn capture_system_audio(latest: Arc<[AtomicU32; FREQUENCY_BANDS]>) -> std::io::R
         })?;
     let stdout = child.stdout.take().expect("stdout is piped");
     let mut reader = BufReader::new(stdout);
-    let mut analyzer = AudioAnalyzer::new(&mut rustfft::FftPlanner::new());
+    let mut analyzer = AudioAnalyzer::new(&mut rustfft::FftPlanner::new(), SAMPLE_RATE);
     let mut frame = [0_u8; 8];
 
     loop {
@@ -192,18 +205,19 @@ fn capture_system_audio(latest: Arc<[AtomicU32; FREQUENCY_BANDS]>) -> std::io::R
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_arch = "wasm32"))]
 struct AudioAnalyzer {
     samples: VecDeque<f32>,
     fft: std::sync::Arc<dyn rustfft::Fft<f32>>,
     window: Vec<f32>,
     window_sum: f32,
     fft_buffer: Vec<rustfft::num_complex::Complex<f32>>,
+    sample_rate: f32,
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_arch = "wasm32"))]
 impl AudioAnalyzer {
-    fn new(planner: &mut rustfft::FftPlanner<f32>) -> Self {
+    fn new(planner: &mut rustfft::FftPlanner<f32>, sample_rate: f32) -> Self {
         use rustfft::num_complex::Complex;
 
         let window: Vec<f32> = (0..FFT_SIZE)
@@ -218,6 +232,7 @@ impl AudioAnalyzer {
             window_sum: window.iter().sum(),
             window,
             fft_buffer: vec![Complex::new(0.0, 0.0); FFT_SIZE],
+            sample_rate,
         }
     }
 
@@ -240,7 +255,7 @@ impl AudioAnalyzer {
                 .take(FFT_SIZE / 2)
                 .skip(1)
             {
-                let frequency = bin as f32 * SAMPLE_RATE / FFT_SIZE as f32;
+                let frequency = bin as f32 * self.sample_rate / FFT_SIZE as f32;
                 let band = if frequency < 250.0 {
                     0
                 } else if frequency < 2_000.0 {
@@ -262,6 +277,53 @@ impl AudioAnalyzer {
             }
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn start_audio_analysis(sample_rate: f32) -> Result<(), wasm_bindgen::JsValue> {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 {
+        return Err(wasm_bindgen::JsValue::from_str(
+            "Invalid audio sample rate.",
+        ));
+    }
+
+    WEB_AUDIO_ANALYZER.with(|analyzer| {
+        let mut planner = rustfft::FftPlanner::new();
+        *analyzer.borrow_mut() = Some(AudioAnalyzer::new(&mut planner, sample_rate));
+    });
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn process_audio_samples(left: &[f32], right: &[f32]) -> Result<(), wasm_bindgen::JsValue> {
+    if !right.is_empty() && left.len() != right.len() {
+        return Err(wasm_bindgen::JsValue::from_str(
+            "Audio channels have different lengths.",
+        ));
+    }
+
+    let latest = WEB_AUDIO_LEVELS
+        .with(|levels| levels.borrow().clone())
+        .ok_or_else(|| wasm_bindgen::JsValue::from_str("Audio analyzer is not initialized."))?;
+    WEB_AUDIO_ANALYZER.with(|analyzer| {
+        let mut analyzer = analyzer.borrow_mut();
+        let analyzer = analyzer
+            .as_mut()
+            .ok_or_else(|| wasm_bindgen::JsValue::from_str("Audio analyzer is not initialized."))?;
+
+        if right.is_empty() {
+            for &sample in left {
+                analyzer.push_sample(sample, &latest);
+            }
+        } else {
+            for (&left, &right) in left.iter().zip(right) {
+                analyzer.push_sample((left + right) * 0.5, &latest);
+            }
+        }
+        Ok(())
+    })
 }
 
 fn animate_mesh(

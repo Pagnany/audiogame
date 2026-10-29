@@ -1,16 +1,106 @@
 <!doctype html>
 <html lang="en">
-
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audio Game</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; color: white; font: 16px sans-serif; }
+    #capture-controls { position: fixed; z-index: 1; top: 12px; left: 12px; display: flex; gap: 12px; align-items: center; }
+    #capture-status { max-width: min(60vw, 600px); }
+    canvas { display: block; }
+  </style>
+</head>
 <body style="margin: 0px;">
+  <div id="capture-controls">
+    <button id="capture-button" type="button">Share screen audio</button>
+    <span id="capture-status" role="status">Choose a tab or screen and enable audio sharing.</span>
+  </div>
   <script type="module">
-    import init from './audiogame.js'
+    import init, { process_audio_samples, start_audio_analysis } from './audiogame.js';
 
-    init().catch((error) => {
-      if (!error.message.startsWith("Using exceptions for control flow, don't mind me. This isn't actually an error!")) {
-        throw error;
+    const button = document.querySelector('#capture-button');
+    const status = document.querySelector('#capture-status');
+    let stream;
+    let audioContext;
+    let source;
+    let processor;
+    let silentOutput;
+
+    function stopCapture(message = 'Audio sharing stopped.') {
+      if (processor) {
+        processor.disconnect();
+        processor.onaudioprocess = null;
+        processor = undefined;
+      }
+      source?.disconnect();
+      source = undefined;
+      silentOutput?.disconnect();
+      silentOutput = undefined;
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = undefined;
+      audioContext?.close();
+      audioContext = undefined;
+      button.textContent = 'Share screen audio';
+      button.disabled = false;
+      status.textContent = message;
+    }
+
+    button.addEventListener('click', async () => {
+      if (stream) {
+        stopCapture();
+        return;
+      }
+
+      button.disabled = true;
+      status.textContent = 'Choose a screen or tab and enable audio sharing.';
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        if (stream.getAudioTracks().length === 0) {
+          stopCapture('No audio track was shared. Select a tab or screen with audio sharing enabled.');
+          return;
+        }
+
+        audioContext = new AudioContext();
+        await audioContext.resume();
+        start_audio_analysis(audioContext.sampleRate);
+        source = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(2048, 2, 1);
+        silentOutput = audioContext.createGain();
+        silentOutput.gain.value = 0;
+        processor.onaudioprocess = (event) => {
+          try {
+            const input = event.inputBuffer;
+            const left = input.getChannelData(0);
+            const right = input.numberOfChannels > 1 ? input.getChannelData(1) : new Float32Array(0);
+            process_audio_samples(left, right);
+          } catch (error) {
+            stopCapture(`Audio analysis failed: ${error.message}`);
+          }
+        };
+        source.connect(processor);
+        processor.connect(silentOutput);
+        silentOutput.connect(audioContext.destination);
+
+        stream.getTracks().forEach((track) => track.addEventListener('ended', () => {
+          if (stream) stopCapture();
+        }, { once: true }));
+        button.textContent = 'Stop sharing';
+        button.disabled = false;
+        status.textContent = 'Capturing shared audio.';
+      } catch (error) {
+        stopCapture(`Could not capture audio: ${error.message}`);
       }
     });
+
+    button.disabled = true;
+    try {
+      await init();
+      button.disabled = false;
+    } catch (error) {
+      status.textContent = `Could not start the audio visualizer: ${error.message}`;
+      throw error;
+    }
   </script>
 </body>
-
 </html>
