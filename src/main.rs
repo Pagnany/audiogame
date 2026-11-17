@@ -25,10 +25,10 @@ std::thread_local! {
 }
 
 fn main() {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        std::env::set_var("WGPU_BACKEND", "dx12");
-    }
+    // #[cfg(target_os = "windows")]
+    // unsafe {
+    //     std::env::set_var("WGPU_BACKEND", "dx12");
+    // }
 
     App::new()
         .add_plugins(DefaultPlugins)
